@@ -1,0 +1,22 @@
+# Some global gitignores exclude build/: here it holds the source code
+!/build/
+build/demo/
+__pycache__/
+.venv/
+.vscode/
+.DS_Store
+
+# The generated website belongs to the pages branch, never to main
+/index.html
+/norai.json
+/manifest.json
+/declaration.txt
+/declaration.txt.asc
+/declarations/
+/revocations.json
+/llms.txt
+/_headers
+/.well-known/
+/pgp/
+/CNAME
+/.nojekyll

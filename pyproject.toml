@@ -1,0 +1,37 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+[project]
+name = "norai-si"
+version = "0.1.0"
+description = "NorAI.SI agent identification web site project."
+authors = [{ name = "Jonathan González", email = "info@jonathangf.com" }]
+license = { text = "Mozilla Public License Version 2.0" }
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = ["cryptography (>=50.0.2,<51.0.0)", "segno (>=1.6,<2.0)"]
+
+[tool.poetry]
+package-mode = false
+packages = [{ include = "src", from = "build" }]
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^9.1.1"
+mypy = "^2.4.0"
+
+[tool.pytest.ini_options]
+pythonpath = ["build/src"]
+
+[tool.semantic_release]
+branch = "main"
+
+[tool.setuptools]
+py-modules = ["version"]
+
+[tool.setuptools.dynamic]
+version = { attr = "version.__version__" }
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
