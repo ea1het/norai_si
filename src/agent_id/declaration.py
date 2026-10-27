@@ -15,7 +15,7 @@ import re
 import tempfile
 from pathlib import Path
 
-from norai_home import gpg
+from .home import gpg
 
 ANNEX_RULE = "──────────────"
 CLEARSIGN_HEADER = "-----BEGIN PGP SIGNED MESSAGE-----"
@@ -30,7 +30,7 @@ LABELS = {
         "title": "OPERATOR DECLARATION · {name} · no. {n} · {date}",
         "intro": "I, {operator}, am the person responsible for the AI agent {name}.\n"
                  "I declare that the information published at {url} is correct:",
-        "what": "What it is", "for": "On whose behalf", "tech": "Technology", "models": "Models",
+        "what": "What it is", "email": "Email", "for": "On whose behalf", "tech": "Technology", "models": "Models",
         "never": "It never", "asks": "It asks first", "valid": "Valid until",
         "tech_line": "{arch}: ~{local}% local models, ~{frontier}% cloud ({providers})",
         "ai": "an artificial intelligence system, not a person",
@@ -41,7 +41,7 @@ LABELS = {
         "title": "DECLARACIÓN DEL OPERADOR · {name} · nº {n} · {date}",
         "intro": "Yo, {operator}, soy la persona responsable del agente de IA {name}.\n"
                  "Declaro que la información publicada en {url} es correcta:",
-        "what": "Qué es", "for": "En nombre de", "tech": "Tecnología", "models": "Modelos",
+        "what": "Qué es", "email": "Correo", "for": "En nombre de", "tech": "Tecnología", "models": "Modelos",
         "never": "Nunca", "asks": "Pide permiso", "valid": "Válida hasta",
         "tech_line": "{arch}: ~{local} % modelos locales, ~{frontier} % en la nube ({providers})",
         "ai": "un sistema de inteligencia artificial, no una persona",
@@ -80,7 +80,7 @@ def render(src: dict, *, number: int, issued: str, expires: str, kids: dict, fin
     t = LABELS[lang]
     ag, op, rt, acc = src["agent"], src["operator"], src["runtime"], src["accountability"]
     providers = sorted({p for m in src["models"] for p in m.get("provider", [])})
-    width = max(len(t[k]) for k in ("what", "for", "tech", "models", "never", "asks", "valid")) + 2
+    width = max(len(t[k]) for k in ("what", "email", "for", "tech", "models", "never", "asks", "valid")) + 2
 
     def field(label, value):
         return f"  {(t[label] + ':').ljust(width)} {value}"
@@ -92,6 +92,7 @@ def render(src: dict, *, number: int, issued: str, expires: str, kids: dict, fin
     lines = [t["title"].format(name=ag["name"], n=number, date=long_date(issued, lang)), "",
              t["intro"].format(operator=op["display_name"], name=ag["name"], url=src["base_url"].rstrip("/") + "/"), "",
              field("what", f"{ag['kind']}: {t['ai']}."),
+             *([field("email", ag["email"])] if ag.get("email") else []),
              field("for", acc["acts_on_behalf_of"]),
              field("tech", t["tech_line"].format(arch=rt["architecture"], local=rt["target_mix"]["local_percent"],
                                                  frontier=rt["target_mix"]["frontier_percent"],

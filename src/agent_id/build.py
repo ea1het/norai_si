@@ -1,27 +1,26 @@
-"""Builds the agent's website from the data in its home folder (see norai_home.py).
+"""Builds the agent's website from the data in build_system/, its working folder (see home.py).
 
-Called by agentid.py. It writes, into the site folder (settings.json → site_dir):
+Called by agentid. It writes, into output_website/:
   - the credential, Agent Card, keys, DID and revocations, signed with the agent's key;
   - manifest.json: the SHA-256 of every published file;
 and, into the agent's home, the declaration the operator has to sign (declarations/NNNN.txt).
 Nothing here needs the operator's private key: the operator signs the declaration separately.
 """
-import base64
 import datetime as dt
 import html
 import json
 import shutil
 from pathlib import Path
 
-from declaration import render, sha256, text_hash
-from norai_crypto import human_fingerprint, public_jwk, sign_document
-from norai_home import ROOT, HomeError
+from . import dns_anchor
+from .crypto import human_fingerprint, public_jwk, sign_document
+from .declaration import render, sha256, text_hash
+from .home import CUSTOM_ASSETS, OUTPUT_WEBSITE, TEMPLATE, HomeError
 
-SRC = Path(__file__).resolve().parent
 # Everything build.py writes into the site folder. Only these are removed before a build:
-# the rest (CNAME, assets/, docs/, build/, pyproject.toml...) is left alone.
+# anything else in the folder (CNAME, .gitkeep, .git...) is left alone.
 GENERATED = ["index.html", "norai.json", "revocations.json", "llms.txt", "_headers", ".well-known", "pgp",
-             "manifest.json", "declaration.txt", "declaration.txt.asc", "declarations"]
+             "images", "styles", "scripts", "manifest.json", "declaration.txt", "declaration.txt.asc", "declarations"]
 # Files that the operator's declaration cannot cover, because they are the declaration itself.
 NOT_IN_MANIFEST = {"manifest.json", "declaration.txt", "declaration.txt.asc", "declarations"}
 E = html.escape
@@ -48,9 +47,15 @@ def check_revocations(entries, current_kids):
     return entries
 
 
+def asset_url(path: str) -> str:
+    """Link to a file from custom_assets/ with a version taken from its content, so that browsers
+    fetch it again whenever it changes instead of reusing a cached copy with new HTML."""
+    return f"{path}?v={sha256((CUSTOM_ASSETS / path).read_bytes())[:12]}"
+
+
 def manifest_files(site: Path) -> dict:
     paths = []
-    for name in GENERATED + ["assets"]:
+    for name in GENERATED:
         path = site / name
         if name in NOT_IN_MANIFEST:
             continue
@@ -74,27 +79,28 @@ def publish_declarations(home, site: Path):
         shutil.copyfile(home.declaration_path(last, True), site / "declaration.txt.asc")
 
 
-def data_uri(path: Path, mime: str) -> str:
-    return f"data:{mime};base64," + base64.b64encode(path.read_bytes()).decode()
+MRZ_WIDTH = 44   # the line length of a passport's machine-readable zone (ICAO 9303, TD3)
 
 
 def mrz(src, issued, expires, kid):
     def line(s):
         s = "".join(c if c.isalnum() else "<" for c in s.upper())
-        return (s + "<" * 30)[:30]
-    d = lambda x: x.strftime("%y%m%d")  # noqa: E731
+        return (s + "<" * MRZ_WIDTH)[:MRZ_WIDTH]
+    d = lambda x: x.strftime("%Y%m%d")  # noqa: E731
     serial = src["serial"].replace("-", "")
     return "\n".join([
         line(f"AI<{src['agent']['handle']}<<{src['domain'].replace('.', '<')}"),
         line(f"{serial}<{d(issued)}<{d(expires)}"),
-        line(f"{src['agent']['name']}<<{src['operator']['display_name']}<<{kid[:8]}"),
+        # The key appears as the start of its hex fingerprint, as on the card and in the QR code: hex has
+        # no case and no symbols, so it survives the MRZ alphabet (A-Z, 0-9, <) unchanged.
+        line(f"{src['agent']['name']}<<{src['operator']['display_name']}<<{human_fingerprint(kid).replace(' ', '')[:10]}"),
     ])
 
 
-def build_site(home, keys: dict, *, changes=(), demo=False, issued=None) -> int:
+def build_site(home, keys: dict, *, changes=(), issued=None) -> int:
     """Builds the site and writes the declaration to sign. Returns the declaration's number."""
     src = home.identity()
-    SITE, OUT = home.site_dir(), home.out
+    SITE, OUT = OUTPUT_WEBSITE, home.out
     number = home.last_signed() + 1
     if number > 1 and not changes:
         raise HomeError("describe what changed since the last declaration (--changes), "
@@ -114,9 +120,9 @@ def build_site(home, keys: dict, *, changes=(), demo=False, issued=None) -> int:
     (SITE / ".well-known").mkdir()
     (SITE / "pgp").mkdir()
     OUT.mkdir(parents=True, exist_ok=True)
-    assets = home.file("assets") if home.file("assets").is_dir() else ROOT / "assets"
-    if assets.resolve() != (SITE / "assets").resolve():
-        shutil.copytree(assets, SITE / "assets", dirs_exist_ok=True)
+    for folder in ("images", "styles", "scripts"):   # the customisable look of the site, published as it is
+        shutil.copytree(CUSTOM_ASSETS / folder, SITE / folder,
+                        ignore=shutil.ignore_patterns(".gitkeep", ".DS_Store"))
 
     id_key = keys["identity"]    # signs documents
     http_key = keys["http"]      # signs HTTP requests (Web Bot Auth)
@@ -126,6 +132,7 @@ def build_site(home, keys: dict, *, changes=(), demo=False, issued=None) -> int:
     fp = human_fingerprint(kid)
 
     pgp_fpr = home.operator_fingerprint()
+    dns_anchor.require(domain, pgp_fpr)
     (SITE / "pgp" / "operator.asc").write_bytes(home.operator_key())
 
     # ── norai.json: the credential ─────────────────────────────────────────
@@ -164,7 +171,7 @@ def build_site(home, keys: dict, *, changes=(), demo=False, issued=None) -> int:
         },
         "verification": {
             "method": "JWS EdDSA over the JCS (RFC 8785) form of the document without 'signatures'; same scheme as A2A v1.0 signed Agent Cards",
-            "dns_txt": f"_norai-id.{domain}",
+            "dns_txt": dns_anchor.record_name(domain),
             "revocations": f"{base}/revocations.json",
             "manifest": f"{base}/manifest.json",
             "operator_declaration": f"{base}/declaration.txt.asc",
@@ -184,7 +191,7 @@ def build_site(home, keys: dict, *, changes=(), demo=False, issued=None) -> int:
         "provider": {"organization": f"NorAI (operator: {src['operator']['display_name']})", "url": base},
         "version": src["version"],
         "documentationUrl": f"{base}/",
-        "iconUrl": f"{base}/assets/norai-logo.png",
+        "iconUrl": f"{base}/images/logo.png",
         "capabilities": {"streaming": False, "pushNotifications": False, "extensions": [{
             "uri": f"{base}/ext/identity/v1",
             "description": "Signed identity credential of the agent and its human operator",
@@ -231,7 +238,7 @@ def build_site(home, keys: dict, *, changes=(), demo=False, issued=None) -> int:
 - [A2A Agent Card]({base}/.well-known/agent-card.json) (signed, A2A v1.0; endpoint status: {src['a2a']['status']})
 - [JWKS]({base}/.well-known/jwks.json), [DID document]({base}/.well-known/did.json) ({did})
 - [Web Bot Auth key directory]({base}/.well-known/http-message-signatures-directory)
-- [Revocations]({base}/revocations.json); DNS anchor: TXT _norai-id.{domain}
+- [Revocations]({base}/revocations.json); DNS anchor: TXT {dns_anchor.record_name(domain)}
 - [Operator's signed declaration]({base}/declaration.txt.asc): covers every file listed in [manifest.json]({base}/manifest.json)
 
 ## Runtime
@@ -264,10 +271,10 @@ A copy of these files proves nothing on its own. Ask NorAI to sign a fresh chall
     if not (SITE / ".nojekyll").exists():  # GitHub Pages: serve .well-known/ instead of skipping dot folders
         write_text(SITE / ".nojekyll", "")
 
-    # The DNS record names the operator, not the agent's keys: it is set up once and only
-    # changes if the operator changes their OpenPGP key.
+    # The DNS record names the operator, not the agent's keys: the operator publishes it once and
+    # it only changes if they change their OpenPGP key. The full fingerprint cannot be forged.
     dns = (f"; Records for the {domain} zone (enable DNSSEC at the registrar)\n"
-           f'_norai-id.{domain}.  3600 IN TXT "v=norai1; pgp={pgp_fpr}"\n'
+           f'{dns_anchor.record_name(domain)}.  3600 IN TXT "0x{pgp_fpr}"\n'
            f'{domain}.            3600 IN CAA 0 issue "letsencrypt.org"\n')
     write_text(OUT / "dns.txt", dns)
 
@@ -295,7 +302,7 @@ A copy of these files proves nothing on its own. Ask NorAI to sign a fresh chall
              f"<dt>Jurisdiction</dt><dd>{val(o['jurisdiction'])}</dd>"
              f"<dt>Web</dt><dd><a href=\"{E(o['website'])}\">{E(o['website'].split('//')[-1])}</a></dd>"
              f"<dt>Contact</dt><dd><span class=\"mono\">{E(o['contact'])}</span><button class=\"copy\" type=\"button\" data-copy=\"{E(o['contact'])}\">copy</button></dd>"
-             f"<dt>OpenPGP</dt><dd class=\"mono\" style=\"font-size:.8rem\">{E(' '.join(pgp_fpr[i:i+4] for i in range(0, len(pgp_fpr), 4)))}</dd>")
+             f"<dt>OpenPGP</dt><dd class=\"mono fpr\">{E(' '.join(pgp_fpr[i:i+4] for i in range(0, len(pgp_fpr), 4)))}</dd>")
     endpoints = [
         ("/norai.json", "Signed JSON (JWS EdDSA)", "Full credential: identity, operator, technology, limits, keys and validity."),
         ("/declaration.txt.asc", "OpenPGP-signed text", "The operator's declaration: plain-language statement, signed by the human operator."),
@@ -323,33 +330,37 @@ Signature: sig1=:jR0x…Q==:""")
     jsonld = json.dumps({
         "@context": "https://schema.org", "@type": "SoftwareApplication", "@id": did,
         "name": ag["name"], "description": ag["self_introduction"], "applicationCategory": "AI agent",
-        "url": f"{base}/", "image": f"{base}/assets/norai-logo.png", "softwareVersion": src["version"],
+        "url": f"{base}/", "image": f"{base}/images/logo.png", "softwareVersion": src["version"],
         "author": {"@type": "Person", "name": o["display_name"], "url": o["website"]},
         "sameAs": [f"{base}/norai.json", f"{base}/.well-known/agent-card.json"],
     }, ensure_ascii=False).replace("</", "<\\/")
 
-    demo_banner = ('<div class="demo" role="note"><strong>Prototype.</strong> The keys and the operator\'s signature on this page are demo values. '
-                   'Do not publish this build.</div>') if demo else ""
     repl = {
-        "FAVICON": data_uri(SITE / "assets" / "favicon.png", "image/png"),
-        "LOGO_MARK": data_uri(SITE / "assets" / "norai-mark.png", "image/png"),
-        "JSONLD": jsonld, "DEMO_BANNER": demo_banner, "VERSION": E(src["version"]), "DOMAIN": E(domain),
+        "FAVICON": asset_url("images/favicon.png"),
+        "LOGO_MARK": asset_url("images/mark.png"),
+        "STYLESHEET": asset_url("styles/credential.css"),
+        "SCRIPT": asset_url("scripts/credential.js"),
+        "JSONLD": jsonld, "VERSION": E(src["version"]), "DOMAIN": E(domain),
         "NAME": E(ag["name"]), "KIND": E(ag["kind"]), "OPERATOR_NAME": E(o["display_name"]),
         "SERIAL": E(src["serial"]), "ISSUED": issued.isoformat(), "EXPIRES": expires.isoformat(), "FP": E(fp),
         "QR_SVG": qr_svg, "MRZ": E(mrz(src, issued, expires, kid)),
         "DISCLOSURE": E(ag["ai_disclosure"]["statement"]),
         "LEAD": E(ag["self_introduction"].removeprefix(f"Hi, I am {ag['name']}. ")),
+        "AGENT_EMAIL": (f'<p class="agent-mail"><span class="eyebrow">Email</span>'
+                        f'<a class="mono" href="mailto:{E(ag["email"])}">{E(ag["email"])}</a>'
+                        f'<button class="copy" type="button" data-copy="{E(ag["email"])}">copy</button></p>'
+                        if ag.get("email") else ""),
         "ARCH": E(rt["architecture"]), "INTERFACES": E(" · ".join(rt["interfaces"])),
         "A2A_STATUS": E(src["a2a"]["status"]), "HARNESSES": E(" · ".join(rt["harnesses"])),
         "MEMORY": E(rt["memory"]), "INFERENCE": E(rt["inference_server"]), "HARDWARE": E(rt["hardware"]),
-        "MIX_LOCAL": str(rt["target_mix"]["local_percent"]), "MIX_FRONTIER": str(rt["target_mix"]["frontier_percent"]),
         "MODELS_ROWS": models_rows, "SKILLS": skills, "OPERATOR_BIO": E(o["bio"]), "OPERATOR_KV": op_kv,
         "CONFIRM_LIST": "".join(f"<li>{E(x)}</li>" for x in src["accountability"]["requires_human_confirmation_for"]),
         "WILLNOT_LIST": "".join(f"<li>{E(x)}</li>" for x in src["accountability"]["will_not"]),
-        "ENDPOINTS_ROWS": endpoints_rows, "HTTP_EXAMPLE": http_example, "DNS_RECORD": E(dns),
+        "ENDPOINTS_ROWS": endpoints_rows, "HTTP_EXAMPLE": http_example, "DNS_RECORD": E(f"; Published in the {domain} zone when this page was built ({issued.isoformat()})\n"
+                         + dns_anchor.site_zone(domain)),
         "DOMAIN_JSON": json.dumps(domain), "FP_JSON": json.dumps(fp),
     }
-    page = (SRC / "template.html").read_text(encoding="utf-8")
+    page = TEMPLATE.read_text(encoding="utf-8")
     for k, v in repl.items():
         page = page.replace("{{" + k + "}}", v)
     leftover = [p for p in page.split("{{")[1:] if "}}" in p[:40]]

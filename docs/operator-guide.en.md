@@ -9,12 +9,16 @@ The agent does almost everything. You only do two things: **a one-time setup** a
 ## One-time setup
 
 1. **Have an OpenPGP key.** It is your personal digital signature. If you do not have one, create it with the tool you prefer: Kleopatra (Windows), GPG Suite (Mac) or GnuPG (Linux).
-2. **Give the agent your public key.** It is a block of text that starts with `-----BEGIN PGP PUBLIC KEY BLOCK-----`. It is public, so you can send it over any channel. **Never give it your private key.**
-3. **Decide where the website is published** (for example, GitHub Pages with your domain) and give the agent the access it needs to publish there.
-4. **Prepare the agent's environment**, if the agent cannot do it alone:
-   - a folder where it keeps its data permanently;
-   - a passphrase for its keys, stored as a secret in its configuration (never inside that folder).
-5. **Create a DNS record** in your domain. After the first publication, the agent will tell you exactly which one. It contains your key's fingerprint, and you will not need to touch it again.
+2. **Publish your key's fingerprint in your domain's DNS**, in a TXT record named `_aid-sysop`. Use the full 40-character fingerprint, without spaces. For example, for `norai.si`:
+
+   ```
+   _aid-sysop.norai.si.  TXT  "0x4EC46C8A6F1AEAC67B6F5DE6152E3EA35B606503"
+   ```
+
+   This is the first and most important step: until it exists the agent can do nothing, because nobody could check who you are. You only need to change it if you change your key. If your DNS provider offers DNSSEC, turn it on: it stops anyone from forging this record.
+3. **Give the agent your public key.** It is a block of text that starts with `-----BEGIN PGP PUBLIC KEY BLOCK-----`. It is public, so you can send it over any channel, as text or as a file. The agent checks that it matches the fingerprint in the DNS and shows it back to you so you can confirm it is yours. **Never give it your private key.**
+4. **Decide where the website is published** (for example, GitHub Pages with your domain) and give the agent the access it needs to publish there. With GitHub Pages, also verify the domain in the GitHub account that publishes it (*Settings → Pages → Add a verified domain*) and publish the TXT record GitHub gives you: then no other account can use your domain.
+5. **Prepare the agent's environment**, if the agent cannot do it alone: a passphrase for its keys, stored as a secret in its configuration, never in the files of the project.
 
 ## Each time something changes
 
@@ -25,10 +29,11 @@ It is a text like this:
 ```
 OPERATOR DECLARATION · NorAI · no. 2 · 25 October 2026
 
-I, Jonathan, am the person responsible for the AI agent NorAI.
+I, Jonathan Gonzalez, am the person responsible for the AI agent NorAI.
 I declare that the information published at https://norai.si/ is correct:
 
   What it is:       Personal AI agent: an artificial intelligence system, not a person.
+  Email:            norai.agent@gmail.com
   On whose behalf:  Its operator only
   Technology:       Hybrid, local-first: ~90% local models, ~10% cloud (Anthropic, OpenAI)
   ...
@@ -78,4 +83,4 @@ By signing, you declare that the information published about the agent is correc
 
 ## If you lose your key or it is stolen
 
-Tell the agent. You will need to create a new key, revoke the old one with your tool, give the agent the new public key and update the DNS record. The agent will then send you a new declaration to sign with the new key.
+Tell the agent. You will need to create a new key, revoke the old one with your tool, update the `_aid-sysop` DNS record with the new fingerprint and then give the agent the new public key. The agent will then send you a new declaration to sign with the new key.

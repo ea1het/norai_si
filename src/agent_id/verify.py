@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Verifies an agent's published identity site, or a local site folder. Anyone can run it.
 
-  python3 build/src/verify.py https://norai.si
-  python3 build/src/verify.py <site folder>
+  agentid-verify https://norai.si
+  agentid-verify <site folder>
+  PYTHONPATH=src python3 -m agent_id.verify https://norai.si   (without installing)
 
 Exit code 0 only if every required check passes.
 """
@@ -14,10 +15,10 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from declaration import annex, sha256, text_hash, verify as verify_signature  # noqa: E402
-from norai_crypto import verify_document  # noqa: E402
-from norai_home import HomeError  # noqa: E402
+from . import dns_anchor
+from .crypto import verify_document
+from .declaration import annex, sha256, text_hash, verify as verify_signature
+from .home import HomeError
 
 
 def fetcher(root: str):
@@ -93,8 +94,16 @@ def verify_site(target: str) -> bool:
     report("Every file matches manifest.json", not bad and "norai.json" in manifest["files"],
            ", ".join(bad) or f"{len(manifest['files'])} files")
 
-    # 3. The operator's declaration covers this manifest and these keys
+    # 3. The operator's key is the one named in the DNS
     operator_fpr = doc["operator"]["pgp"]["fingerprint"].upper()
+    domain = doc["protocols"]["did"]["id"].split(":")[-1]
+    try:
+        dns_ok, dns_detail = dns_anchor.check(domain, operator_fpr)
+    except HomeError as e:
+        dns_ok, dns_detail = False, str(e)
+    report(f"Operator key published in DNS ({dns_anchor.record_name(domain)})", dns_ok, dns_detail)
+
+    # 4. The operator's declaration covers this manifest and these keys
     operator_key = get("/pgp/operator.asc")
     try:
         text = get("/declaration.txt")
@@ -117,7 +126,7 @@ def verify_site(target: str) -> bool:
     report("Declaration names the agent keys in use",
            facts.get("identity-key") == kid and facts.get("http-key") == http_kid)
 
-    # 4. The chain of earlier declarations
+    # 5. The chain of earlier declarations
     number = int(facts.get("declaration", "0"))
     expected_prev = facts.get("previous-declaration-sha256")
     chain_ok, detail = True, f"{number} declaration(s)"
@@ -136,9 +145,7 @@ def verify_site(target: str) -> bool:
         chain_ok, detail = False, "the first declaration points to an earlier one"
     report("Chain of declarations", chain_ok, detail)
 
-    domain = doc["protocols"]["did"]["id"].split(":")[-1]
-    print(f"\nAlso check the DNS anchor by hand: dig TXT _norai-id.{domain} must show pgp={operator_fpr}.")
-    print("Before trusting a counterpart, ask for a liveness proof (a fresh challenge signed with its key).")
+    print("\nBefore trusting a counterpart, ask for a liveness proof (a fresh challenge signed with its key).")
     print("\nRESULT:", "VALID" if ok_all else "INVALID")
     return ok_all
 

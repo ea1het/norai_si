@@ -47,7 +47,7 @@ sequenceDiagram
 |---|---|
 | Guarda y actualiza sus datos de identidad | Una vez: le da su clave pública OpenPGP |
 | Genera la web y la firma con sus claves | Una vez: decide dónde se publica y le da acceso |
-| Redacta la declaración y se la entrega | Una vez: crea un registro DNS |
+| Redacta la declaración y se la entrega | Una vez, antes que nada: publica la huella de su clave en el registro DNS `_aid-sysop` |
 | Comprueba la firma que recibe y la incorpora | Cada vez: lee la declaración, la firma y la devuelve |
 | Publica | Decide si firma. Sin su firma no se publica nada |
 
@@ -58,17 +58,17 @@ sequenceDiagram
 | Pieza | Qué contiene | Quién la controla |
 |---|---|---|
 | **La herramienta** (este repositorio) | El código, el diseño de la página y un ejemplo de datos. Nada propio de ningún agente | Es pública y cualquiera la puede clonar |
-| **La carpeta del agente** (`AGENT_ID_HOME`) | Los datos del agente, sus claves cifradas, la clave pública del operador y todas las declaraciones | El agente, en su almacenamiento persistente |
-| **La carpeta de la web** (`site_dir`) | La web generada, lista para publicar | El agente la genera; el método de publicación lo decide el operador |
+| **`build_system/`**, la carpeta de trabajo del agente | Los datos del agente, sus claves cifradas y todas las declaraciones. Git solo guarda el ejemplo | El agente |
+| **`output_website/`** | La web generada en cada build, lista para publicar | El agente la genera y la sube; el método de publicación lo decide el operador |
 
-### 2.1 La carpeta del agente
+### 2.1 La carpeta de trabajo del agente: `build_system/`
+
+En un proyecto recién clonado solo contiene `identity.example.json`. Lo demás lo crean `setup`, `import`, `build` y `attach`, y git lo ignora:
 
 ```
-<AGENT_ID_HOME>/
+build_system/
+├── identity.example.json    ejemplo de datos (en git)
 ├── identity.json            datos públicos del agente y de su operador
-├── operator.asc             clave pública OpenPGP del operador
-├── settings.json            ajustes locales (no se publican): dónde se escribe la web
-├── site/                    la web, si settings.json no indica otra carpeta
 ├── revocations.json         claves retiradas antes de caducar
 ├── keys/                    claves privadas del agente, cifradas
 ├── declarations/
@@ -76,11 +76,13 @@ sequenceDiagram
 │   ├── 0001.txt.asc         la firma que devolvió el operador
 │   └── …
 └── out/
-    ├── dns.txt              el registro DNS que debe crear el operador
+    ├── dns.txt              el registro DNS que debe tener publicado el operador
     └── artifact.html        vista previa de la página
 ```
 
-Puede estar en cualquier carpeta que sobreviva a los reinicios: una carpeta local (por defecto `~/.agent-id`), un volumen montado o una carpeta sincronizada con otros equipos. Las claves van cifradas, así que una copia sincronizada no sirve de nada sin la frase de paso. Por eso la frase de paso **nunca** se guarda en esa carpeta.
+Esta carpeta **puede perderse en cualquier momento**: basta con borrar o volver a clonar el repositorio. Por eso todo lo que contiene, salvo las claves privadas, se puede recuperar de la web publicada con `agentid import site <URL>` (ver [§13](#13-qué-pasa-si-se-pierde-algo)). Las claves privadas no se publican nunca: si se pierden, se generan otras y el operador firma una declaración nueva.
+
+Si el repositorio está en una carpeta sincronizada con otros equipos, las claves viajan cifradas: una copia sincronizada no sirve de nada sin la frase de paso. Por eso la frase de paso **nunca** se guarda en el repositorio.
 
 ### 2.2 La herramienta
 
@@ -89,34 +91,42 @@ norai_si/
 ├── AGENTS.md                         instrucciones para agentes
 ├── skills/agent-identity/SKILL.md    procedimientos paso a paso
 ├── docs/                             esta documentación y la guía del operador
-├── build/
-│   ├── identity.example.json         ejemplo de datos (los de NorAI)
-│   └── src/
-│       ├── agentid.py                el único comando que usa el agente
-│       ├── build.py                  genera la web, el manifiesto y la declaración
-│       ├── declaration.py            redacta la declaración y comprueba su firma
-│       ├── verify.py                 verifica una web (lo puede usar cualquiera)
-│       ├── norai_crypto.py           firmas JWS, JCS y huellas
-│       ├── norai_keys.py             guardado cifrado de las claves
-│       ├── norai_home.py             la carpeta del agente
-│       └── template.html             diseño de la página
-├── assets/                           logos
+├── src/agent_id/
+│   ├── cli.py                        el comando `agentid`
+│   ├── build.py                      genera la web, el manifiesto y la declaración
+│   ├── declaration.py                redacta la declaración y comprueba su firma
+│   ├── verify.py                     el comando `agentid-verify` (lo puede usar cualquiera)
+│   ├── imports.py                    `import site` e `import gpg`
+│   ├── dns_anchor.py                 la regla del DNS `_aid-sysop` y los registros que muestra la página
+│   ├── crypto.py                     firmas JWS, JCS y huellas
+│   ├── keys.py                       guardado cifrado de las claves
+│   ├── home.py                       la carpeta de trabajo del agente
+│   └── __init__.py, __main__.py      ficheros del paquete (`python -m agent_id`)
+├── custom_assets/                    el aspecto de la web: se puede personalizar
+│   ├── html/template.html            estructura de la página
+│   ├── images/                       logos e imágenes (se publican en /images/)
+│   ├── styles/                       hojas de estilo CSS (se publican en /styles/)
+│   ├── scripts/                      JavaScript de la página, incluido el verificador (se publica en /scripts/)
+│   └── operator/                     clave pública OpenPGP del operador: un fichero, cualquier nombre (git lo ignora)
+├── build_system/
+│   └── identity.example.json         ejemplo de datos (los de NorAI); el resto es la carpeta de trabajo del agente
+├── output_website/                   la web que genera cada build
 ├── pyproject.toml, poetry.lock       dependencias de Python
 └── LICENSE, README.md, version.py
 ```
 
-### 2.3 El caso de NorAI: dos branches
+### 2.3 El caso de NorAI: dos repositorios
 
-El repositorio de NorAI tiene dos branches con contenidos que no se mezclan:
+La herramienta y la web viven en repositorios distintos, que no se mezclan:
 
-| Branch | Contenido | Quién lo modifica |
+| Repositorio | Contenido | Quién lo modifica |
 |---|---|---|
-| `main` | La herramienta: todo lo listado en la sección 2.2 | Las personas que desarrollan la herramienta, mediante Pull Request |
-| `pages` | Solo la web generada, más `CNAME` (el dominio) y `.nojekyll`. GitHub Pages la sirve en `norai.si` | El agente, con cada declaración firmada |
+| La herramienta (este) | Todo lo listado en la sección 2.2 | Las personas que desarrollan la herramienta |
+| La web | Solo la web generada, más `CNAME` (el dominio) y `.nojekyll`. Pertenece a la cuenta de GitHub del propio agente, y GitHub Pages la sirve en `norai.si` | El agente, con cada declaración firmada |
 
-El agente trabaja con dos copias del repositorio: una en `main` para ejecutar la herramienta y otra en `pages`, que es su carpeta de la web (`setup --site <copia de pages>`). `build.py` solo borra y reescribe los ficheros que él genera; `CNAME` y `.nojekyll` no se tocan nunca. El `.gitignore` de `main` excluye los ficheros de la web, para que no acaben en el branch equivocado.
+Cada build escribe la web en `output_website/`. Para publicar, el agente copia ese contenido en su clon del repositorio de la web sin tocar `CNAME` (`rsync -a --delete --exclude .git --exclude CNAME --exclude .gitkeep output_website/ <website repository>/`), hace commit y push con su cuenta. El `.gitignore` de la herramienta excluye los ficheros de la web, para que no acaben en el repositorio equivocado.
 
-> Algunos `.gitignore` globales excluyen cualquier carpeta llamada `build/`. El `.gitignore` del proyecto lo anula con `!/build/`.
+La primera publicación la subió el operador a mano, con la cuenta del agente. Las siguientes las hace el agente: `agentid import site https://norai.si` recupera lo publicado, genera sus propias claves y continúa la cadena de declaraciones.
 
 ---
 
@@ -126,9 +136,9 @@ Hay tres pares de claves. Cada uno responde **una pregunta distinta**:
 
 | Clave | Dónde vive | Algoritmo | Pregunta que responde |
 |---|---|---|---|
-| **Identidad del agente** | `keys/identity-ed25519.key.json`, en la carpeta del agente | Ed25519 | *¿Estos datos los emitió el agente y nadie los ha alterado?* |
-| **HTTP del agente** | `keys/http-ed25519.key.json`, en la carpeta del agente | Ed25519 | *¿Esta petición que me llega ahora viene del agente?* |
-| **OpenPGP del operador** | En el equipo del operador; el agente solo tiene la pública | El de la clave (RSA, Ed25519…) | *¿Hay una persona concreta que responde por este agente y aprueba lo publicado?* |
+| **Identidad del agente** | `keys/identity-ed25519.key.json`, en la carpeta de trabajo del agente | Ed25519 | *¿Estos datos los emitió el agente y nadie los ha alterado?* |
+| **HTTP del agente** | `keys/http-ed25519.key.json`, en la carpeta de trabajo del agente | Ed25519 | *¿Esta petición que me llega ahora viene del agente?* |
+| **OpenPGP del operador** | En el equipo del operador; el agente solo tiene la pública, en `custom_assets/operator/` | El de la clave (RSA, Ed25519…) | *¿Hay una persona concreta que responde por este agente y aprueba lo publicado?* |
 
 ### 3.1 Por qué hacen falta las dos firmas
 
@@ -151,11 +161,11 @@ Si el agente se firmara solo, se estaría avalando a sí mismo. La firma OpenPGP
 
 ## 4. Cómo nacen las claves del agente
 
-Las claves **no se piden a nadie ni se registran en ningún sitio: las genera el agente** la primera vez que ejecuta `agentid.py setup`.
+Las claves **no se piden a nadie ni se registran en ningún sitio: las genera el agente** la primera vez que ejecuta `agentid setup`.
 
 1. **Clave privada**: 32 bytes **aleatorios** sacados del generador criptográfico del sistema operativo. Es un número tan grande (2²⁵⁶ posibilidades) que nadie más en el mundo obtendrá el mismo.
 2. **Clave pública**: se **calcula** a partir de la privada (SHA-512 y una multiplicación en la curva elíptica Ed25519). Ir de la privada a la pública es inmediato; ir de la pública a la privada es, en la práctica, imposible.
-3. **Guardado**: la clave privada se **cifra** con una frase de paso y se guarda en la carpeta del agente. La pública se guarda en claro junto a ella (ver [§11](#11-custodia-de-las-claves-privadas-del-agente)).
+3. **Guardado**: la clave privada se **cifra** con una frase de paso y se guarda en la carpeta de trabajo del agente. La pública se guarda en claro junto a ella (ver [§11](#11-custodia-de-las-claves-privadas-del-agente)).
 
 > **¿Qué es `hazmat`?** El código importa `cryptography.hazmat...`. `cryptography` es la librería criptográfica de referencia en Python (proyecto *pyca*). `hazmat` (*hazardous materials*, "material peligroso") es su módulo de primitivas de bajo nivel, como Ed25519, AES o scrypt. El nombre avisa de que, si se combinan mal, se rompe la seguridad. Todo se ejecuta en local: no es un servicio externo.
 
@@ -168,11 +178,11 @@ Las claves **no se piden a nadie ni se registran en ningún sitio: las genera el
 | Identificador | Ejemplo | Cómo se obtiene |
 |---|---|---|
 | **`kid`** (*key id*) | `A7LyKUh23ylmRTtVBr6QijcPGxocmcLUgw2uk_lE-XE` | SHA-256 de la clave pública en formato JWK canónico (RFC 7638), en base64url |
-| **Huella corta** | `03B2 F229 4876 DF29 6645` | Los primeros 10 bytes del `kid` en hexadecimal. Sirve para leerla en voz alta o en papel |
+| **Huella corta** | `03B2 F229 4876 DF29 6645` | Los primeros 10 bytes del `kid` en hexadecimal. Sirve para leerla en voz alta o en papel. Aparece en la tarjeta, va dentro del QR y sus 10 primeros caracteres figuran en la MRZ |
 | **DID** | `did:web:norai.si` | `did:web:` + el dominio. Hereda la propiedad del dominio |
 | **Huella OpenPGP** | `4EC4 6C8A … 6503` | La calcula OpenPGP a partir de la clave pública del operador |
 | **Número de serie** | `NORAI-2026-0001` | Lo fija `identity.json`. Es solo una etiqueta y no aporta seguridad |
-| **Número de declaración** | `3` | Correlativo. Lo asigna `agentid.py build` |
+| **Número de declaración** | `3` | Correlativo. Lo asigna `agentid build` |
 
 Cálculo del `kid`, paso a paso:
 
@@ -196,7 +206,7 @@ En ningún registro central. La confianza se construye **anclando las claves en 
 ```mermaid
 flowchart TB
     op((clave OpenPGP<br/>del operador))
-    op -->|huella publicada en| dns[DNS: TXT _norai-id.norai.si]
+    op -->|huella publicada en| dns[DNS: TXT _aid-sysop.norai.si]
     op -->|firma| decl[declaración]
     decl -->|incluye el hash de| man[manifest.json]
     man -->|incluye el hash de| files[norai.json, jwks.json,<br/>agent-card.json, index.html…]
@@ -210,9 +220,21 @@ Los únicos "registros" que intervienen ya existían y no son específicos de es
 
 1. **El registro de dominios**: dice quién controla el dominio.
 2. **Certificate Transparency**: cada certificado TLS emitido para el dominio queda en registros públicos y auditables.
-3. **El DNS**: el registro `TXT _norai-id` publica la **huella OpenPGP del operador** por un canal independiente de la web. Si alguien compromete el hosting pero no el DNS, no puede sustituir al operador.
+3. **El DNS**: el registro `TXT _aid-sysop` publica la **huella OpenPGP del operador** por un canal independiente de la web. Si alguien compromete el hosting pero no el DNS, no puede sustituir al operador.
 
 El registro DNS contiene la huella del operador y no las claves del agente. Así se crea **una sola vez** y solo cambia si el operador cambia de clave OpenPGP. El agente puede renovar sus claves sin que nadie toque el DNS.
+
+### 6.1 La regla del DNS
+
+El registro `_aid-sysop.<dominio>` es la raíz de la confianza, y la herramienta lo comprueba siempre antes de usar la clave del operador (`import gpg`, `import site`, `build`, `attach` y `verify`):
+
+| Situación | Qué pasa |
+|---|---|
+| No hay registro | No se avanza. Sin él no se puede verificar ni al agente ni al operador |
+| La clave del operador no coincide con el registro | Se detiene. No puede existir una web que contradiga al DNS |
+| Coinciden | Se continúa |
+
+El registro debe contener la **huella completa de 40 caracteres**, por ejemplo `"0x4EC46C8A6F1AEAC67B6F5DE6152E3EA35B606503"`. Un ID corto, de 16 u 8 caracteres, se rechaza: se puede falsificar generando otra clave cuya huella acabe igual (el ataque conocido como "Evil32"). Los espacios dentro del valor se ignoran, pero es mejor publicarlo sin ellos.
 
 ---
 
@@ -220,7 +242,7 @@ El registro DNS contiene la huella del operador y no las claves del agente. Así
 
 ### 7.1 Firma del agente (JWS sobre JCS)
 
-Es el mismo esquema que usa A2A v1.0 para firmar *Agent Cards*. Está implementado en `build/src/norai_crypto.py`:
+Es el mismo esquema que usa A2A v1.0 para firmar *Agent Cards*. Está implementado en `src/agent_id/crypto.py`:
 
 1. Se toma el documento **sin** el campo `signatures`.
 2. Se **canonicaliza** con JCS (RFC 8785): claves ordenadas y sin espacios. Así, el mismo contenido produce siempre exactamente los mismos bytes, lo genere quien lo genere.
@@ -232,7 +254,9 @@ Se firman `norai.json`, `.well-known/agent-card.json` y `revocations.json`. Si c
 
 ### 7.2 El manifiesto
 
-`manifest.json` lista el SHA-256 de **cada fichero publicado**: la página, la credencial, las claves, el DID, la Agent Card, las revocaciones, los logos… Quedan fuera solo el propio manifiesto y las declaraciones, porque son lo que firma el operador.
+`manifest.json` lista el SHA-256 de **cada fichero publicado**: la página, la credencial, las claves, el DID, la Agent Card, las revocaciones, las imágenes, las hojas de estilo, los scripts… Quedan fuera solo el propio manifiesto y las declaraciones, porque son lo que firma el operador.
+
+La página enlaza su hoja de estilo, su script y sus imágenes con una versión sacada del contenido de cada fichero (`styles/credential.css?v=…`). Cuando un fichero cambia, cambia también su enlace, y el navegador descarga el nuevo en lugar de reutilizar una copia guardada junto a un HTML nuevo.
 
 Todos los ficheros se escriben con finales de línea LF, también en Windows, para que el hash de cada fichero sea el mismo en cualquier sistema.
 
@@ -240,7 +264,7 @@ Todos los ficheros se escriben con finales de línea LF, también en Windows, pa
 
 Es un texto que redacta el agente a partir de `identity.json`. Tiene dos partes:
 
-- **La parte de arriba, para la persona**: qué es el agente, en nombre de quién actúa, qué tecnología y qué modelos usa, qué no hará nunca, para qué pide permiso, hasta cuándo es válida y **qué ha cambiado** desde la declaración anterior. Sale en el idioma del operador (`operator.language`: `en` o `es`).
+- **La parte de arriba, para la persona**: qué es el agente, su correo (si `agent.email` existe), en nombre de quién actúa, qué tecnología y qué modelos usa, qué no hará nunca, para qué pide permiso, hasta cuándo es válida y **qué ha cambiado** desde la declaración anterior. Sale en el idioma del operador (`operator.language`: `en` o `es`).
 - **El anexo técnico, para las máquinas**: líneas `clave: valor` con el nombre del agente, el dominio, el número de declaración, las fechas, las claves del agente, el **SHA-256 de `manifest.json`** y el **SHA-256 de la declaración anterior**.
 
 El hash de la declaración anterior encadena todas las declaraciones. Al firmar la última, el operador avala también la secuencia completa: nadie puede reescribir el historial sin que se note.
@@ -250,10 +274,11 @@ El operador puede firmar de dos formas, y ambas son válidas:
 - **Texto firmado** (`gpg --clearsign`, "Firmar" en Kleopatra): un único bloque de texto con la declaración y la firma.
 - **Firma separada**, en texto (`.asc`) o binaria (`.sig`). Las binarias se convierten a texto al guardarlas.
 
-Antes de aceptar la firma, `agentid.py attach` comprueba tres cosas. Si alguna falla, la rechaza:
-1. que la firma es válida y la hizo la clave del operador guardada en la carpeta del agente;
-2. que el texto firmado es exactamente la declaración pendiente;
-3. que la web no ha cambiado desde que se redactó.
+Antes de aceptar la firma, `agentid attach` comprueba cuatro cosas. Si alguna falla, la rechaza:
+1. que la clave del operador de `custom_assets/operator/` coincide con el registro DNS `_aid-sysop`;
+2. que la firma es válida y la hizo esa clave;
+3. que el texto firmado es exactamente la declaración pendiente;
+4. que la web no ha cambiado desde que se redactó.
 
 ---
 
@@ -261,7 +286,7 @@ Antes de aceptar la firma, `agentid.py attach` comprueba tres cosas. Si alguna f
 
 | Ruta | Para quién | Contenido |
 |---|---|---|
-| `/` | Personas | El carné visual: QR, línea tipo pasaporte (MRZ), tecnología, operador y un verificador en el navegador |
+| `/` | Personas | El carné visual (QR y líneas tipo pasaporte o MRZ), el correo del agente, el operador responsable, la tecnología, un verificador en el navegador, y los registros DNS `_aid-sysop` y CAA tal como estaban publicados al generar la página |
 | `/norai.json` | Agentes | La credencial completa, firmada por el agente |
 | `/manifest.json` | Agentes | El SHA-256 de cada fichero publicado |
 | `/declaration.txt` | Personas | La última declaración, en texto |
@@ -275,16 +300,18 @@ Antes de aceptar la firma, `agentid.py attach` comprueba tres cosas. Si alguna f
 | `/.well-known/security.txt` | Personas | Contacto para avisos de seguridad (RFC 9116) |
 | `/revocations.json` | Agentes | Lista firmada de claves retiradas |
 | `/llms.txt` | Modelos de lenguaje | Resumen en Markdown |
+| `/images/`, `/styles/`, `/scripts/` | Navegadores | Imágenes, hojas de estilo y JavaScript de la página, copiados de `custom_assets/` |
+| `/_headers`, `/.nojekyll` | El alojamiento | Ajustes de alojamiento: tipos de contenido (Netlify, Cloudflare Pages) y, en GitHub Pages, que se sirva `.well-known/` |
 
-**Solo se publican claves públicas.** Ninguna clave privada sale nunca de la carpeta del agente.
+**Solo se publican claves públicas.** Ninguna clave privada sale nunca de la carpeta de trabajo del agente.
 
 ---
 
 ## 9. Cómo se verifica
 
 ```bash
-python3 build/src/verify.py https://norai.si      # la web publicada
-python3 build/src/agentid.py verify               # la carpeta de la web, antes de publicar
+agentid-verify https://norai.si      # la web publicada
+agentid verify               # output_website/, antes de publicar
 ```
 
 `verify.py` lo puede usar cualquiera, no solo el agente. Comprueba, en orden:
@@ -293,17 +320,18 @@ python3 build/src/agentid.py verify               # la carpeta de la web, antes 
 2. Que `did.json` y `jwks.json` publican las mismas claves, y que la clave de Web Bot Auth es la que declara la credencial.
 3. Que la credencial no ha caducado y que ninguna de las claves en uso está revocada.
 4. Que **cada fichero coincide** con el hash que figura en `manifest.json`.
-5. Que la declaración está **firmada por el operador** cuya huella figura en `norai.json`.
-6. Que la declaración **cubre este manifiesto** y nombra **las claves en uso**.
-7. Que **la cadena** de declaraciones anteriores está completa, cada una firmada por el operador y con el hash correcto de la anterior.
+5. Que la huella del operador que figura en `norai.json` coincide con el registro DNS `_aid-sysop`.
+6. Que la declaración está **firmada por el operador** cuya huella figura en `norai.json`.
+7. Que la declaración **cubre este manifiesto** y nombra **las claves en uso**.
+8. Que **la cadena** de declaraciones anteriores está completa, cada una firmada por el operador y con el hash correcto de la anterior.
 
-La comprobación del DNS se hace a mano. El registro debe mostrar la misma huella OpenPGP:
+También se puede consultar el registro a mano:
 
 ```bash
-dig TXT _norai-id.norai.si
+dig TXT _aid-sysop.norai.si
 ```
 
-El verificador de la propia página hace las comprobaciones principales en el navegador: firmas del agente, firma del operador, manifiesto y claves.
+El verificador de la propia página hace las comprobaciones principales en el navegador: firmas del agente, firma del operador, manifiesto, claves, el dominio desde el que se sirve y, si la página se abre desde el QR, la huella del QR. No puede consultar el DNS, así que la comprobación de `_aid-sysop` solo la hace `agentid-verify`.
 
 ---
 
@@ -314,7 +342,7 @@ Cada capa cubre un hueco que deja abierto la capa con el número inmediatamente 
 | # | Capa | Protege contra | No protege contra |
 |---|---|---|---|
 | 1 | **Dominio + HTTPS** | Que un tercero publique en nombre del dominio | Que alguien comprometa el hosting |
-| 2 | **DNS** (`TXT _norai-id`, con la huella del operador) | Un hosting comprometido que intente cambiar de operador. Mejor con DNSSEC | Que alguien comprometa el DNS |
+| 2 | **DNS** (`TXT _aid-sysop`, con la huella del operador) | Un hosting comprometido que intente cambiar de operador. Mejor con DNSSEC | Que alguien comprometa el DNS |
 | 3 | **Firma del agente** | Datos alterados en tránsito o en copias | Que alguien robe las claves del agente |
 | 4 | **Declaración firmada por el operador** | Claves del agente robadas, ficheros cambiados sin aprobación humana, historial reescrito | Que alguien robe la clave del operador |
 | 5 | **Prueba de vida** | **Que alguien copie los ficheros y se haga pasar por el agente** | — |
@@ -338,7 +366,7 @@ Cada clave se guarda en un fichero JSON (`keys/<nombre>-ed25519.key.json`):
 }
 ```
 
-- La **clave pública va en claro**, para poder consultar el `kid` sin la frase de paso (`agentid.py keys show`).
+- La **clave pública va en claro**, para poder consultar el `kid` sin la frase de paso (`agentid keys show`).
 - La **clave privada va cifrada**:
   - a partir de la frase de paso se deriva una clave de 256 bits con **scrypt** (RFC 7914), un algoritmo diseñado para que cada intento de adivinarla cueste mucha memoria (≈128 MB) y tiempo;
   - con esa clave se cifra con **AES-256-GCM**, que además detecta cualquier manipulación del fichero;
@@ -349,8 +377,8 @@ Cada clave se guarda en un fichero JSON (`keys/<nombre>-ed25519.key.json`):
 ### 11.2 La frase de paso
 
 - El agente la lee de la variable de entorno `AGENT_ID_PASSPHRASE`, que debe venir de su almacén de secretos: la configuración de secretos de su plataforma, un gestor de contraseñas, etc.
-- **Nunca se guarda en la carpeta del agente.** Si esa carpeta se copia o se sincroniza, las claves siguen protegidas.
-- Si la variable no existe, `agentid.py` la pide por teclado.
+- **Nunca se guarda en la carpeta de trabajo del agente.** Si esa carpeta se copia o se sincroniza, las claves siguen protegidas.
+- Si la variable no existe, `agentid` la pide por teclado.
 - Mínimo 12 caracteres. Mejor una frase de 4 o 5 palabras al azar.
 
 ### 11.3 macOS, Linux y Windows
@@ -361,7 +389,7 @@ El sistema funciona en los tres. Las diferencias:
 |---|---|---|---|
 | Python | python.org o Homebrew | El de la distribución | python.org (`py` en lugar de `python3`) |
 | GnuPG (para comprobar la firma del operador) | GPG Suite o `brew install gnupg` | Paquete `gnupg` | Gpg4win |
-| Permisos de la carpeta del agente | `chmod 700/600` (lo aplica el programa) | `chmod 700/600` (lo aplica el programa) | `chmod` no tiene efecto real. Protegen el cifrado y los permisos NTFS de la carpeta de usuario |
+| Permisos de la carpeta de trabajo del agente | `chmod 700/600` (lo aplica el programa) | `chmod 700/600` (lo aplica el programa) | `chmod` no tiene efecto real. Protegen el cifrado y los permisos NTFS de la carpeta de usuario |
 | Cifrado de disco | FileVault | LUKS | BitLocker |
 | Finales de línea | LF | LF | El programa escribe LF, y `.gitattributes` evita que git los convierta |
 
@@ -376,11 +404,11 @@ Una firma digital **no caduca sola**. Si alguien roba una clave, puede seguir fi
 ### 12.2 Cómo funciona aquí
 
 ```bash
-python3 build/src/agentid.py keys new --replace --reason "Portátil robado; tenía las claves" --compromised
+agentid keys new --replace --reason "Portátil robado; tenía las claves" --compromised
 ```
 
 1. Las claves actuales pasan a `keys/retired/`.
-2. Se añaden a `revocations.json`, en la carpeta del agente, con la fecha y el motivo.
+2. Se añaden a `revocations.json`, en la carpeta de trabajo del agente, con la fecha y el motivo.
 3. Se generan claves nuevas.
 4. El agente prepara una declaración nueva con `build --changes "Nuevas claves del agente: …"` y el operador la firma.
 
@@ -405,13 +433,13 @@ La confianza descansa en la firma del operador, no en las claves del agente por 
 
 | Se pierde… | Consecuencia | Qué hacer |
 |---|---|---|
-| Las claves del agente | El agente no puede firmar nuevas versiones con ellas | `agentid.py setup` crea claves nuevas; después, nueva declaración firmada por el operador |
-| La frase de paso de las claves | Las claves no se pueden abrir | `agentid.py keys new --replace --reason "Frase de paso perdida"` y nueva declaración |
-| La carpeta del agente entera | Se pierden los datos, las claves y las declaraciones guardadas | Las declaraciones siguen publicadas en la web. Se copian de `/declarations/` a la nueva carpeta, `identity.json` se reconstruye a partir de `/norai.json`, y se ejecuta `agentid.py setup` |
-| La clave OpenPGP del operador | No se pueden firmar más declaraciones | El operador revoca su clave con su herramienta, crea una nueva, se la da al agente (`setup --operator-key`) y actualiza el registro DNS |
+| Las claves del agente | El agente no puede firmar nuevas versiones con ellas | `agentid setup` crea claves nuevas; después, nueva declaración firmada por el operador |
+| La frase de paso de las claves | Las claves no se pueden abrir | `agentid keys new --replace --reason "Frase de paso perdida"` y nueva declaración |
+| La carpeta de trabajo entera (`build_system/`) | Se pierden los datos, las claves y las declaraciones guardadas | `agentid import site <URL>` comprueba la web publicada y recupera `identity.json`, todas las declaraciones firmadas y las revocaciones; las claves antiguas quedan revocadas como perdidas. No guarda la clave del operador: si `custom_assets/operator/` está vacía, el operador la vuelve a dar (`agentid import gpg`). Después, `agentid setup` crea claves nuevas y el operador firma una declaración nueva |
+| La clave OpenPGP del operador | No se pueden firmar más declaraciones | El operador revoca su clave con su herramienta, crea una nueva, actualiza el registro DNS `_aid-sysop` y después se la da al agente (`agentid import gpg --replace`) |
 | Robo de las claves del agente | Un tercero puede firmar documentos como el agente, pero sin la firma del operador no verifican | `keys new --replace --reason "…" --compromised`, nueva declaración, publicar |
 
-Hacer copia de la carpeta del agente sigue siendo buena idea (por ejemplo, sincronizándola con otro equipo), pero ya no es imprescindible para mantener la identidad.
+Hacer copia de la carpeta de trabajo del agente sigue siendo buena idea (por ejemplo, sincronizándola con otro equipo), pero ya no es imprescindible para mantener la identidad.
 
 ---
 
@@ -419,13 +447,14 @@ Hacer copia de la carpeta del agente sigue siendo buena idea (por ejemplo, sincr
 
 | Momento | Quién | Qué pasa |
 |---|---|---|
-| Probar sin compromiso | Agente | `agentid.py demo`: web completa con claves y operador de demostración. La página muestra un aviso de prototipo |
-| Preparación | Operador y agente | El operador da su clave pública y el acceso de publicación. El agente ejecuta `agentid.py setup` y completa `identity.json` |
-| Primera versión | Agente | `agentid.py build` → declaración nº 1 |
+| DNS | Operador | Publica el registro `_aid-sysop` con la huella completa de su clave. Es lo primero y se hace una sola vez |
+| Preparación | Operador y agente | El operador da su clave pública y el acceso de publicación. El agente ejecuta `agentid setup`, guarda la clave con `agentid import gpg` y completa `identity.json` |
+| Recuperación | Agente | Si se pierde `build_system/`: `agentid import site <URL>`, `agentid setup` y nueva declaración |
+| Empezar de cero | Agente | `agentid clean` vacía `build_system/` (todo salvo `identity.example.json`, también las claves) y `output_website/` (todo salvo `.gitkeep`) |
+| Primera versión | Agente | `agentid build` → declaración nº 1 |
 | Firma | Operador | Lee, firma y devuelve |
-| Incorporación | Agente | `agentid.py attach <firma>` |
-| Publicación | Agente | Publica la carpeta de la web y ejecuta `agentid.py verify https://…` |
-| DNS | Operador | Crea el registro de `out/dns.txt`. Una sola vez |
+| Incorporación | Agente | `agentid attach <firma>` |
+| Publicación | Agente | Sube el contenido de `output_website/` y ejecuta `agentid verify https://…` |
 | Cambios | Agente y operador | `build --changes "…"` → nueva declaración → firma del operador → `attach` → publicar |
 | Renovación anual | Agente y operador | Antes de la fecha de validez (`valid_days`, 365 días): `build --changes "Renovación anual"` → firma del operador → `attach` → publicar |
 | Incidente con claves | Agente y operador | `keys new --replace …` → `build --changes "Nuevas claves del agente: …"` → firma del operador → `attach` → publicar |
@@ -450,6 +479,7 @@ La web tampoco necesita clave propia: es el lugar donde vive la identidad del ag
 - **Si el operador cambia de clave OpenPGP**, las declaraciones antiguas siguen firmadas con la clave anterior. Hoy, `verify.py` comprueba toda la cadena con la clave actual, así que tras un cambio de clave del operador la cadena antigua no verificará. Hará falta publicar también las claves anteriores del operador.
 - **El directorio Web Bot Auth** debería servirse con su propia firma HTTP. En un hosting estático eso requiere una función en el borde (por ejemplo, un Cloudflare Worker).
 - **GitHub Pages no aplica `_headers`.** Los tipos de contenido de los ficheros sin extensión serán genéricos. Cloudflare Pages y Netlify sí lo aplican.
+- **Los navegadores pueden seguir mostrando la página anterior durante unos minutos después de publicar** (GitHub Pages permite 10). Las hojas de estilo, los scripts y las imágenes llevan versión, pero el HTML no. El verificador siempre lee `norai.json` recién descargado, así que su resultado es correcto; la tarjeta y su QR pueden ser los antiguos hasta que se recargue la página.
 - **La canonicalización JCS es simplificada**: no admite números decimales (no hay ninguno). Si se añaden, hay que usar una librería JCS completa.
 
 ---

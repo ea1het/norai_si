@@ -1,12 +1,20 @@
-# Some global gitignores exclude build/: here it holds the source code
-!/build/
-build/demo/
+# build_system/ is the agent's working folder (its data, keys and declarations): only the example is tracked
+/build_system/*
+!/build_system/identity.example.json
+
+# custom_assets/operator/ holds the operator's own public key: local, so git updates never touch it
+/custom_assets/operator/*
+!/custom_assets/operator/.gitkeep
+
+# output_website/ is written by every build and published from the agent's workspace
+/output_website/*
+!/output_website/.gitkeep
 __pycache__/
 .venv/
 .vscode/
 .DS_Store
 
-# The generated website belongs to the pages branch, never to main
+# The generated website belongs to the website's own repository, never to this one
 /index.html
 /norai.json
 /manifest.json

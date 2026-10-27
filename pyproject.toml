@@ -10,18 +10,22 @@ authors = [{ name = "Jonathan González", email = "info@jonathangf.com" }]
 license = { text = "Mozilla Public License Version 2.0" }
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = ["cryptography (>=50.0.2,<51.0.0)", "segno (>=1.6,<2.0)"]
+dependencies = ["cryptography (>=50.0.2,<51.0.0)", "segno (>=1.6,<2.0)", "dnspython (>=2.7,<3.0)"]
 
 [tool.poetry]
-package-mode = false
-packages = [{ include = "src", from = "build" }]
+package-mode = true
+packages = [{ include = "agent_id", from = "src" }]
+
+[project.scripts]
+agentid = "agent_id.cli:main"
+agentid-verify = "agent_id.verify:main"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.1.1"
 mypy = "^2.4.0"
 
 [tool.pytest.ini_options]
-pythonpath = ["build/src"]
+pythonpath = ["src"]
 
 [tool.semantic_release]
 branch = "main"

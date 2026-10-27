@@ -1,6 +1,6 @@
-"""Storage of the agent's private keys, in the keys/ folder of its home (see norai_home.py).
+"""Storage of the agent's private keys, in the keys/ folder of its home (see home.py).
 
-Each key lives in one JSON file (<home>/keys/<name>-ed25519.key.json) that holds:
+Each key lives in one JSON file (build_system/keys/<name>-ed25519.key.json) that holds:
   - the public key as a JWK, in clear, so its kid can be read without a passphrase;
   - the 32-byte Ed25519 private key, encrypted with a passphrase:
       key        = scrypt(passphrase, salt, N=2^17, r=8, p=1)     (RFC 7914)
@@ -21,12 +21,11 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
-from norai_crypto import b64u, b64u_decode, public_jwk
+from .crypto import b64u, b64u_decode, public_jwk
 
 NAMES = ("identity", "http")
 FORMAT = "norai-key/1"
 PASSPHRASE_ENV = "AGENT_ID_PASSPHRASE"
-DEMO_PASSPHRASE = b"demo passphrase, not a secret"
 MIN_PASSPHRASE = 12
 SCRYPT = {"n": 2 ** 17, "r": 8, "p": 1}
 
@@ -109,7 +108,7 @@ def missing(folder: Path) -> list:
 
 def load_all(folder: Path, passphrase: bytes = None) -> dict:
     if missing(folder):
-        raise KeyStoreError("the agent has no keys yet. Run: python3 build/src/agentid.py setup")
+        raise KeyStoreError("the agent has no keys yet. Run: agentid setup")
     passphrase = passphrase or ask_passphrase()
     return {n: load(key_path(n, folder), passphrase) for n in NAMES}
 
@@ -118,8 +117,3 @@ def create_all(folder: Path, passphrase: bytes):
     for n in NAMES:
         save(Ed25519PrivateKey.generate(), key_path(n, folder), passphrase)
 
-
-def load_or_create_demo(folder: Path) -> dict:
-    if missing(folder):
-        create_all(folder, DEMO_PASSPHRASE)
-    return load_all(folder, DEMO_PASSPHRASE)
